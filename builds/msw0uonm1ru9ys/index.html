@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0d0d0d">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>شطرنج الملوك</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&display=swap'); /* الخط الوحيد المسموح للجمالية، وسيعمل بدونه */
+        
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+        body { 
+            background: radial-gradient(circle at center, #2a2a35 0%, #050505 100%);
+            color: #d4af37; 
+            font-family: 'Amiri', serif; 
+            height: 100vh; 
+            overflow: hidden; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center;
+        }
+        #game-container { position: relative; width: 100vmin; height: 100vmin; max-width: 800px; max-height: 800px; display: flex; justify-content: center; align-items: center; }
+        canvas { 
+            box-shadow: 0 20px 50px rgba(0,0,0,0.8), 0 0 0 4px #d4af37, 0 0 0 10px #1a1a1a; 
+            border-radius: 4px; 
+            background: #111;
+            touch-action: none;
+        }
+        .ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px);
+            z-index: 10; border-radius: 4px; transition: opacity 0.3s;
+        }
+        .hidden { display: none !important; }
+        h1 { font-size: 3rem; text-shadow: 0 0 20px #d4af37; margin-bottom: 30px; letter-spacing: 2px; }
+        h2 { font-size: 2rem; color: #fff; margin-bottom: 20px; }
+        .btn {
+            background: linear-gradient(135deg, #d4af37, #aa7c11); color: #000;
+            border: none; padding: 15px 40px; font-size: 1.5rem; font-family: 'Amiri', serif; font-weight: bold;
+            border-radius: 50px; cursor: pointer; margin: 10px;
+            box-shadow: 0 5px 15px rgba(212, 175, 55, 0.4); transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover { transform: scale(1.05); box-shadow: 0 8px 25px rgba(212, 175, 55, 0.6); }
+        .btn:active { transform: scale(0.95); }
+        #top-bar {
+            position: absolute; top: -60px; width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 0 20px;
+        }
+        .status { font-size: 1.5rem; text-shadow: 0 0 10px #d4af37; }
+        .icon-btn { background: none; border: 1px solid #d4af37; color: #d4af37; padding: 5px 15px; border-radius: 20px; cursor: pointer; font-family: inherit; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="top-bar" class="hidden">
+        <div class="status" id="status-text">دور: الأبيض</div>
+        <button class="icon-btn" onclick="pauseGame()">إيقاف / قائمة</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- القائمة الرئيسية -->
+    <div id="main-menu" class="ui-layer">
+        <h1>شطرنج الملوك</h1>
+        <button class="btn" onclick="startGame(true)">لعب ضد الذكاء الاصطناعي</button>
+        <button class="btn" onclick="startGame(false)">لعب ثنائي (نفس الجهاز)</button>
+    </div>
+
+    <!-- قائمة النهاية -->
+    <div id="game-over" class="ui-layer hidden">
+        <h1 id="winner-text">كش مات!</h1>
+        <button class="btn" onclick="showMenu()">العودة للقائمة</button>
+    </div>
+</div>
+
+<script>
+    // --- إعدادات اللعبة والكانفاس ---
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    let size = Math.min(window.innerWidth, window.innerHeight) * 0.9;
+    if (size > 800) size = 800;
+    canvas.width = size;
+    canvas.height = size;
+    const tileSize = size / 8;
+
+    // --- نظام الصوت (Web Audio API) ---
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    function playSound(type) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        const now = audioCtx.currentTime;
+        if (type === 'move') {
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(300, now);
+            osc.frequency.exponentialRampToValueAtTime(100, now + 0.1);
+            gain.gain.setValueAtTime(0.5, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+            osc.start(now); osc.stop(now + 0.1);
+        } else if (type === 'capture') {
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(150, now);
+            osc.frequency.exponentialRampToValueAtTime(50, now + 0.2);
+            gain.gain.setValueAtTime(0.3, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+            osc.start(now); osc.stop(now + 0.2);
+        } else if (type === 'check') {
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(400, now);
+            osc.frequency.linearRampToValueAtTime(600, now + 0.1);
+            osc.frequency.linearRampToValueAtTime(400, now + 0.3);
+            gain.gain.setValueAtTime(0.5, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+            osc.start(now); osc.stop(now + 0.3);
+        }
+    }
+
+    // --- منطق الشطرنج ---
+    const PIECES = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
+    const VALS = { p: 10, n: 30, b: 30, r: 50, q: 90, k: 9000 };
+    
+    let board = [];
+    let turn = 'w';
+    let state = 'menu'; // menu, playing, gameover
+    let againstAI = true;
+    let selectedSq = null;
+    let validMoves = [];
+    let animatingPiece = null;
+    let particles = [];
+    
+    // حالة التبييت (Castling) والمرور (En Passant)
+    let castling = { w: {k:true, q:true}, b: {k:true, q:true} };
+    let enPassant = null;
+
+    function initBoard() {
+        const initial = [
+            ['r','n','b','q','k','b','n','r'],
+            ['p','p','p','p','p','p','p','p'],
+            ['.','.','.','.','.','.','.','.'],
+            ['.','.','.','.','.','.','.','.'],
+            ['.','.','.','.','.','.','.','.'],
+            ['.','.','.','.','.','.','.','.'],
+            ['P','P','P','P','P','P','P','P'],
+            ['R','N','B','Q','K','B','N','R']
+        ];
+        board = [];
+        for (let r=0; r<8; r++) {
+            board[r] = [];
+            for (let c=0; c<8; c++) {
+                let p = initial[r][c];
+                if (p === '.') board[r][c] = null;
+                else board[r][c] = { type: p.toLowerCase(), color: p === p.toLowerCase() ? 'b' : 'w' };
+            }
+        }
+        turn = 'w';
+        castling = { w: {k:true, q:true}, b: {k:true, q:true} };
+        enPassant = null;
+        selectedSq = null;
+        validMoves = [];
+        particles = [];
+    }
+
+    function isInside(r, c) { return r>=0 && r<8 && c>=0 && c<8; }
+
+    function getPseudoMoves(b, r, c) {
+        let moves = [];
+        let p = b[r][c];
+        if(!p) return moves;
+        let color = p.color;
+        let opp = color === 'w' ? 'b' : 'w';
+        let dir = color === 'w' ? -1 : 1;
+
+        if (p.type === 'p') {
+            if (isInside(r+dir, c) && !b[r+dir][c]) {
+                moves.push({r:r+dir, c:c});
+                if ((color === 'w' && r === 6) || (color === 'b' && r === 1)) {
+                    if (!b[r+dir*2][c]) moves.push({r:r+dir*2, c:c});
+                }
+            }
+            if (isInside(r+dir, c-1) && (b[r+dir][c-1]?.color === opp || (enPassant?.r===r+dir && enPassant?.c===c-1))) moves.push({r:r+dir, c:c-1});
+            if (isInside(r+dir, c+1) && (b[r+dir][c+1]?.color === opp || (enPassant?.r===r+dir && enPassant?.c===c+1))) moves.push({r:r+dir, c:c+1});
+        }
+        
+        const dirs = {
+            'n': [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]],
+            'b': [[-1,-1],[-1,1],[1,-1],[1,1]],
+            'r': [[-1,0],[1,0],[0,-1],[0,1]],
+            'q': [[-1,-1],[-1,1],[1,-1],[1,1],[-1,0],[1,0],[0,-1],[0,1]],
+            'k': [[-1,-1],[-1,1],[1,-1],[1,1],[-1,0],[1,0],[0,-1],[0,1]]
+        };
+
+        if (p.type !== 'p') {
+            let limit = (p.type === 'n' || p.type === 'k') ? 1 : 7;
+            for (let d of dirs[p.type]) {
+                for (let i=1; i<=limit; i++) {
+                    let nr = r + d[0]*i;
+                    let nc = c + d[1]*i;
+                    if (!isInside(nr, nc)) break;
+                    if (!b[nr][nc]) { moves.push({r:nr, c:nc}); }
+                    else {
+                        if (b[nr][nc].color === opp) moves.push({r:nr, c:nc});
+                        break;
+                    }
+                }
+            }
+        }
+
+        // التبييت (Castling)
+        if (p.type === 'k') {
+            let row = color === 'w' ? 7 : 0;
+            if (r === row && c === 4) {
+                if (castling[color].k && !b[row][5] && !b[row][6]) moves.push({r:row, c:6, castle:'k'});
+                if (castling[color].q && !b[row][3] && !b[row][2] && !b[row][1]) moves.push({r:row, c:2, castle:'q'});
+            }
+        }
+
+        return moves;
+    }
+
+    function isAttacked(b, r, c, attackerColor) {
+        for(let i=0; i<8; i++){
+            for(let j=0; j<8; j++){
+                if(b[i][j] && b[i][j].color === attackerColor) {
+                    let moves = getPseudoMoves(b, i, j);
+                    for(let m of moves) if(m.r === r && m.c === c) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    function inCheck(b, color) {
+        let kr=-1, kc=-1;
+        for(let i=0; i<8; i++){
+            for(let j=0; j<8; j++){
+                if(b[i][j] && b[i][j].type === 'k' && b[i][j].color === color){
+                    kr=i; kc=j; break;
+                }
+            }
+        }
+        return isAttacked(b, kr, kc, color === 'w' ? 'b' : 'w');
+    }
+
+    function cloneBoard(b) { return b.map(row => row.slice().map(p => p ? {...p} : null)); }
+
+    function getLegalMoves(b, r, c) {
+        let pseudo = getPseudoMoves(b, r, c);
+        let color = b[r][c].color;
+        let legal = [];
+        for (let m of pseudo) {
+            // منع التبييت إذا كان الملك في كش أو المربعات مهددة
+            if(m.castle) {
+                if(inCheck(b, color)) continue;
+                if(m.castle === 'k' && isAttacked(b, r, 5, color==='w'?'b':'w')) continue;
+                if(m.castle === 'q' && isAttacked(b, r, 3, color==='w'?'b':'w')) continue;
+            }
+            
+            let nb = cloneBoard(b);
+            nb[m.r][m.c] = nb[r][c];
+            nb[r][c] = null;
+            // En passant
+            if(b[r][c].type==='p' && m.c !== c && !b[m.r][m.c]) {
+                nb[r][m.c] = null; 
+            }
+            if (!inCheck(nb, color)) legal.push(m);
+        }
+        return legal;
+    }
+
+    function getAllLegalMoves(b, color) {
+        let all = [];
+        for(let r=0; r<8; r++) {
+            for(let c=0; c<8; c++) {
+                if(b[r][c] && b[r][c].color === color) {
+                    let moves = getLegalMoves(b, r, c);
+                    for(let m of moves) all.push({from:{r,c}, to:m});
+                }
+            }
+        }
+        return all;
+    }
+
+    function executeMove(b, from, to) {
+        let p = b[from.r][from.c];
+        let captured = b[to.r][to.c];
+        let isEP = false;
+
+        if(p.type === 'p' && to.c !== from.c && !captured) {
+            captured = b[from.r][to.c];
+            b[from.r][to.c] = null; // En passant
+            isEP = true;
+        }
+        
+        b[to.r][to.c] = p;
+        b[from.r][from.c] = null;
+
+        // ترقية البيدق
+        if(p.type === 'p' && (to.r === 0 || to.r === 7)) {
+            p.type = 'q'; // ترقية تلقائية للوزير
+        }
+
+        // تبييت
+        if(to.castle === 'k') { b[to.r][5] = b[to.r][7]; b[to.r][7] = null; }
+        if(to.castle === 'q') { b[to.r][3] = b[to.r][0]; b[to.r][0] = null; }
+
+        // تحديث حالة التبييت
+        if(p.type === 'k') castling[p.color] = {k:false, q:false};
+        if(p.type === 'r') {
+            if(from.c === 0) castling[p.color].q = false;
+            if(from.c === 7) castling[p.color].k = false;
+        }
+
+        // تحديث En Passant
+        if(p.type === 'p' && Math.abs(to.r - from.r) === 2) {
+            enPassant = {r: (from.r+to.r)/2, c: from.c};
+        } else {
+            enPassant = null;
+        }
+
+        return captured;
+    }
+
+    // --- الذكاء الاصطناعي (Minimax) ---
+    function evaluateBoard(b) {
+        let score = 0;
+        for(let r=0; r<8; r++) {
+            for(let c=0; c<8; c++) {
+                let p = b[r][c];
+                if(p) {
+                    let val = VALS[p.type];
+                    // علاوة للمراكز
+                    if((r>2&&r<5) && (c>2&&c<5)) val += 2;
+                    score += p.color === 'b' ? val : -val;
+                }
+            }
+        }
+        return score;
+    }
+
+    function minimax(b, depth, alpha, beta, isMax) {
+        let moves = getAllLegalMoves(b, isMax ? 'b' : 'w');
+        if (depth === 0 || moves.length === 0) return evaluateBoard(b);
+
+        if (isMax) {
+            let maxEval = -Infinity;
+            for (let m of moves) {
+                let nb = cloneBoard(b);
+                let oldCastle = JSON.parse(JSON.stringify(castling));
+                let oldEP = enPassant ? {...enPassant} : null;
+                executeMove(nb, m.from, m.to);
+                let ev = minimax(nb, depth - 1, alpha, beta, false);
+                castling = oldCastle; enPassant = oldEP; // تراجع
+                maxEval = Math.max(maxEval, ev);
+                alpha = Math.max(alpha, ev);
+                if (beta <= alpha) break;
+            }
+            return maxEval;
+        } else {
+            let minEval = Infinity;
+            for (let m of moves) {
+                let nb = cloneBoard(b);
+                let oldCastle = JSON.parse(JSON.stringify(castling));
+                let oldEP = enPassant ? {...enPassant} : null;
+                executeMove(nb, m.from, m.to);
+                let ev = minimax(nb, depth - 1, alpha, beta, true);
+                castling = oldCastle; enPassant = oldEP;
+                minEval = Math.min(minEval, ev);
+                beta = Math.min(beta, ev);
+                if (beta <= alpha) break;
+            }
+            return minEval;
+        }
+    }
+
+    function makeAIMove() {
+        let moves = getAllLegalMoves(board, 'b');
+        if(moves.length === 0) return;
+        
+        let bestMove = null;
+        let bestVal = -Infinity;
+        
+        // خلط الحركات لتجنب التكرار
+        moves.sort(() => Math.random() - 0.5);
+
+        for (let m of moves) {
+            let nb = cloneBoard(board);
+            let oldCastle = JSON.parse(JSON.stringify(castling));
+            let oldEP = enPassant ? {...enPassant} : null;
+            executeMove(nb, m.from, m.to);
+            let moveVal = minimax(nb, 2, -Infinity, Infinity, false);
+            castling = oldCastle; enPassant = oldEP;
+            
+            if (moveVal > bestVal) {
+                bestVal = moveVal;
+                bestMove = m;
+            }
+        }
+
+        if(bestMove) {
+            animateAndMove(bestMove.from, bestMove.to);
+        }
+    }
+
+    // --- الرسوميات والتحريك ---
+    function spawnParticles(x, y) {
+        for(let i=0; i<20; i++){
+            particles.push({
+                x: x, y: y,
+                vx: (Math.random()-0.5)*10, vy: (Math.random()-0.5)*10,
+                life: 1.0, color: Math.random()>0.5 ? '#d4af37' : '#fff'
+            });
+        }
+    }
+
+    function drawParticles() {
+        for(let i=particles.length-1; i>=0; i--) {
+            let p = particles[i];
+            p.x += p.vx; p.y += p.vy; p.life -= 0.05;
+            if(p.life <= 0) { particles.splice(i, 1); continue; }
+            ctx.globalAlpha = p.life;
+            ctx.fillStyle = p.color;
+            ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI*2); ctx.fill();
+        }
+        ctx.globalAlpha = 1.0;
+    }
+
+    function drawBoard() {
+        ctx.clearRect(0,0,size,size);
+        
+        // رسم الرقعة
+        for(let r=0; r<8; r++){
+            for(let c=0; c<8; c++){
+                let isDark = (r+c)%2 !== 0;
+                ctx.fillStyle = isDark ? '#2a2a35' : '#4a4a5a'; // ألوان فخمة (رمادي داكن ورمادي فاتح)
+                ctx.fillRect(c*tileSize, r*tileSize, tileSize, tileSize);
+                
+                // تحديد المربع
+                if(selectedSq && selectedSq.r === r && selectedSq.c === c) {
+                    ctx.fillStyle = 'rgba(212, 175, 55, 0.4)';
+                    ctx.fillRect(c*tileSize, r*tileSize, tileSize, tileSize);
+                    ctx.strokeStyle = '#d4af37';
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(c*tileSize, r*tileSize, tileSize, tileSize);
+                }
+            }
+        }
+
+        // رسم علامات الحركات المتاحة
+        for(let m of validMoves) {
+            ctx.fillStyle = board[m.r][m.c] ? 'rgba(255, 50, 50, 0.6)' : 'rgba(212, 175, 55, 0.6)';
+            ctx.beginPath();
+            ctx.arc(m.c*tileSize + tileSize/2, m.r*tileSize + tileSize/2, tileSize/6, 0, Math.PI*2);
+            ctx.fill();
+        }
+
+        // رسم القطع
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        let fontSize = tileSize * 0.7;
+        ctx.font = `${fontSize}px Arial`;
+
+        for(let r=0; r<8; r++){
+            for(let c=0; c<8; c++){
+                let p = board[r][c];
+                if(p && (!animatingPiece || animatingPiece.r !== r || animatingPiece.c !== c)) {
+                    drawPiece(p, c*tileSize + tileSize/2, r*tileSize + tileSize/2);
+                }
+            }
+        }
+
+        // رسم القطعة المتحركة
+        if(animatingPiece) {
+            drawPiece(animatingPiece.p, animatingPiece.x, animatingPiece.y);
+            animatingPiece.x += (animatingPiece.tx - animatingPiece.x) * 0.2;
+            animatingPiece.y += (animatingPiece.ty - animatingPiece.y) * 0.2;
+            if(Math.abs(animatingPiece.tx - animatingPiece.x) < 2 && Math.abs(animatingPiece.ty - animatingPiece.y) < 2) {
+                // انتهاء الحركة
+                finalizeMove(animatingPiece.from, animatingPiece.to);
+                animatingPiece = null;
+            }
+        }
+
+        drawParticles();
+    }
+
+    function drawPiece(p, x, y) {
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.shadowBlur = 10;
+        ctx.shadowOffsetY = 5;
+        
+        // تدرج لوني للقطع
+        let grad = ctx.createLinearGradient(x, y - tileSize/2, x, y + tileSize/2);
+        if(p.color === 'w') {
+            grad.addColorStop(0, '#ffe58f');
+            grad.addColorStop(1, '#d4af37');
+        } else {
+            grad.addColorStop(0, '#e0e0e0');
+            grad.addColorStop(1, '#888888');
+        }
+        
+        ctx.fillStyle = grad;
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1;
+        ctx.fillText(PIECES[p.type], x, y + tileSize*0.05); // تعديل بسيط للمحاذاة
+        ctx.strokeText(PIECES[p.type], x, y + tileSize*0.05);
+        ctx.restore();
+    }
+
+    function animateAndMove(from, to) {
+        let p = board[from.r][from.c];
+        animatingPiece = {
+            p: p, from: from, to: to, r: from.r, c: from.c,
+            x: from.c*tileSize + tileSize/2, y: from.r*tileSize + tileSize/2,
+            tx: to.c*tileSize + tileSize/2, ty: to.r*tileSize + tileSize/2
+        };
+    }
+
+    function finalizeMove(from, to) {
+        let captured = executeMove(board, from, to);
+        if(captured) {
+            playSound('capture');
+            spawnParticles(to.c*tileSize + tileSize/2, to.r*tileSize + tileSize/2);
+        } else {
+            playSound('move');
+        }
+
+        turn = turn === 'w' ? 'b' : 'w';
+        document.getElementById('status-text').innerText = `دور: ${turn === 'w' ? 'الأبيض' : 'الأسود'}`;
+        
+        // فحص الكش أو الكش مات
+        if(inCheck(board, turn)) {
+            let moves = getAllLegalMoves(board, turn);
+            if(moves.length === 0) {
+                gameOver(turn === 'w' ? 'الأسود' : 'الأبيض');
+            } else {
+                playSound('check');
+                document.getElementById('status-text').innerText += ' (كش!)';
+            }
+        } else {
+            let moves = getAllLegalMoves(board, turn);
+            if(moves.length === 0) gameOver('تعادل'); // ستال ميت
+        }
+
+        if(state === 'playing' && againstAI && turn === 'b') {
+            setTimeout(makeAIMove, 300);
+        }
+    }
+
+    // --- التفاعل (الماوس واللمس) ---
+    function handleInput(x, y) {
+        if(state !== 'playing' || animatingPiece) return;
+        if(againstAI && turn === 'b') return; // لا تسمح بالضغط أثناء دور الذكاء
+
+        let rect = canvas.getBoundingClientRect();
+        let scale = canvas.width / rect.width;
+        let cx = (x - rect.left) * scale;
+        let cy = (y - rect.top) * scale;
+        
+        let c = Math.floor(cx / tileSize);
+        let r = Math.floor(cy / tileSize);
+
+        if(!isInside(r,c)) return;
+
+        // إذا كان هناك مربع محدد، تحقق مما إذا كانت الحركة صحيحة
+        if(selectedSq) {
+            let move = validMoves.find(m => m.r === r && m.c === c);
+            if(move) {
+                animateAndMove(selectedSq, move);
+                selectedSq = null;
+                validMoves = [];
+                return;
+            }
+        }
+
+        // تحديد قطعة
+        let p = board[r][c];
+        if(p && p.color === turn) {
+            selectedSq = {r, c};
+            validMoves = getLegalMoves(board, r, c);
+        } else {
+            selectedSq = null;
+            validMoves = [];
+        }
+    }
+
+    canvas.addEventListener('mousedown', e => handleInput(e.clientX, e.clientY));
+    canvas.addEventListener('touchstart', e => { e.preventDefault(); handleInput(e.touches[0].clientX, e.touches[0].clientY); }, {passive: false});
+
+    // --- دورة اللعبة و UI ---
+    function loop() {
+        if(state === 'playing') drawBoard();
+        requestAnimationFrame(loop);
+    }
+
+    function startGame(ai) {
+        againstAI = ai;
+        initBoard();
+        state = 'playing';
+        document.getElementById('main-menu').classList.add('hidden');
+        document.getElementById('game-over').classList.add('hidden');
+        document.getElementById('top-bar').classList.remove('hidden');
+        document.getElementById('status-text').innerText = 'دور: الأبيض';
+        playSound('move');
+    }
+
+    function gameOver(winner) {
+        state = 'gameover';
+        document.getElementById('game-over').classList.remove('hidden');
+        document.getElementById('top-bar').classList.add('hidden');
+        document.getElementById('winner-text').innerText = winner === 'تعادل' ? 'تعادل!' : `الفائز: ${winner}`;
+    }
+
+    function showMenu() {
+        state = 'menu';
+        document.getElementById('main-menu').classList.remove('hidden');
+        document.getElementById('game-over').classList.add('hidden');
+        document.getElementById('top-bar').classList.add('hidden');
+        ctx.clearRect(0,0,size,size);
+    }
+
+    function pauseGame() {
+        showMenu();
+    }
+
+    // تهيئة أولية
+    requestAnimationFrame(loop);
+</script>
+</body>
+</html>
